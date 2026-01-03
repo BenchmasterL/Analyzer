@@ -8,7 +8,7 @@ from scipy.stats import t
 from arch import arch_model
 from sklearn.mixture import GaussianMixture
 
-# --- NASTAVENÍ STRÁNKY ---
+# --- KONFIGURACE STRÁNKY ---
 st.set_page_config(page_title="QuantGod AI", layout="wide", page_icon="🚀")
 
 # --- CSS STYLOVÁNÍ ---
@@ -21,16 +21,16 @@ st.markdown("""
         border-radius: 10px;
         text-align: center;
     }
-    .stButton>button {
-        width: 100%;
-        background-color: #FF4B4B;
-        color: white;
-        font-weight: bold;
+    div[data-testid="stMetricValue"] {
+        font-size: 24px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- NASA MATH: KALMAN FILTER ---
+# ==============================================================================
+# 🧠 JÁDRO: MATEMATICKÉ FUNKCE (STEJNÉ JAKO V COLABU)
+# ==============================================================================
+
 class QuantKalman:
     def __init__(self, process_variance=1e-5, measurement_variance=1e-3):
         self.process_variance = process_variance
@@ -58,14 +58,12 @@ def get_kalman_drift(prices):
     slope = (smoothed[-1] - smoothed[-5]) / smoothed[-5]
     return slope * (252 / 5)
 
-# --- FRACTAL MATH: HURST ---
 def get_hurst_exponent(time_series, max_lag=20):
     lags = range(2, max_lag)
     tau = [np.sqrt(np.std(np.subtract(time_series[lag:], time_series[:-lag]))) for lag in lags]
     poly = np.polyfit(np.log(lags), np.log(tau), 1)
     return poly[0] * 2.0
 
-# --- DATA DOWNLOADER ---
 @st.cache_data(ttl=3600)
 def download_data(ticker, period="5y"):
     try:
@@ -77,7 +75,6 @@ def download_data(ticker, period="5y"):
         return df['Close']
     except: return pd.Series()
 
-# --- AI REGIME DETECTION ---
 @st.cache_data(ttl=3600)
 def get_macro_data():
     try:
@@ -95,10 +92,8 @@ def get_macro_data():
         is_panic = (curr_state == np.argmax(means))
         
         vix = yf.download("^VIX", period="5d", progress=False)['Close'].iloc[-1].item()
-        tnx = yf.download("^TNX", period="5d", progress=False)['Close'].iloc[-1].item()
-        
-        return ("PANIC 🔴" if is_panic else "CALM 🟢"), vix, (0.8 if is_panic else 0.0), tnx
-    except: return "NEUTRAL", 20.0, 0.0, 4.0
+        return ("PANIC 🔴" if is_panic else "CALM 🟢"), vix, (0.8 if is_panic else 0.0)
+    except: return "NEUTRAL", 20.0, 0.0
 
 def get_fundamentals(ticker):
     try:
@@ -106,19 +101,16 @@ def get_fundamentals(ticker):
         return info.get('targetMeanPrice', None)
     except: return None
 
-# --- SIMULATION ENGINE ---
 def run_garch_simulation(train_prices, horizon_days, n_sims, macro_vix, panic_prob, target_price=None):
     start_price = train_prices.iloc[-1]
     returns = 100 * np.log(1 + train_prices.pct_change().dropna())
     
-    # GARCH Fit
     model = arch_model(returns, vol='Garch', p=1, q=1, dist='t')
     res = model.fit(disp='off')
     
     omega = res.params['omega']/10000; alpha = res.params['alpha[1]']; beta = res.params['beta[1]']; nu = res.params['nu']
     last_vol = res.conditional_volatility.iloc[-1]/100
     
-    # Drift Logic (Kalman + Fractal + AI)
     hurst = get_hurst_exponent(train_prices.values[-100:])
     kalman_trend = get_kalman_drift(train_prices)
     long_term_drift = (returns.mean()/100)*252
@@ -135,7 +127,6 @@ def run_garch_simulation(train_prices, horizon_days, n_sims, macro_vix, panic_pr
         
     final_drift_daily = (base_drift + ai_penalty) / 252
     
-    # MC Loop
     paths = np.zeros((horizon_days, n_sims)); paths[0] = start_price
     sim_vol = np.zeros((horizon_days, n_sims)); sim_vol[0] = last_vol
     t_shocks = t.rvs(nu, size=(horizon_days, n_sims)) / np.sqrt(nu/(nu-2))
@@ -151,41 +142,38 @@ def run_garch_simulation(train_prices, horizon_days, n_sims, macro_vix, panic_pr
         
     return paths, hurst
 
-# --- SIDEBAR UI ---
-st.sidebar.image("https://img.icons8.com/color/96/000000/bullish.png", width=60)
-st.sidebar.title("QuantGod AI")
-mode = st.sidebar.selectbox("Vyber Režim", ["ANALYZER 🔮", "BACKTESTER 🧪", "OPTIMIZER ⚖️"])
+# ==============================================================================
+# 📱 GRAFICKÉ ROZHRANÍ (STREAMLIT)
+# ==============================================================================
 
-ticker_input = "NVDA"
-simulations = 2000
-history_years = 5
+# 1. Sidebar Menu
+st.sidebar.title("QuantGod AI 🧠")
+mode = st.sidebar.radio("Vyber Režim:", ["ANALYZER (Predikce)", "BACKTESTER (Validace)", "OPTIMIZER (Portfolio)"])
 
-if mode != "OPTIMIZER ⚖️":
-    ticker_input = st.sidebar.text_input("Symbol Akcie", "NVDA").upper()
-    simulations = st.sidebar.slider("Simulace", 1000, 5000, 3000)
-    history_years = st.sidebar.slider("Historie (roky)", 2, 10, 5)
+if mode != "OPTIMIZER (Portfolio)":
+    ticker_input = st.sidebar.text_input("Zadej Ticker", "NVDA").upper()
+    simulations = st.sidebar.slider("Počet simulací", 1000, 5000, 2000)
 else:
     portfolio_input = st.sidebar.text_area("Portfolio (odděl čárkou)", "NVDA, MSFT, GOOGL, AMZN, KO, BTC-USD, GLD")
 
-run_btn = st.sidebar.button("SPUSTIT VÝPOČET 🔥")
+start_btn = st.sidebar.button("SPUSTIT ANALÝZU 🔥", type="primary")
 
-# --- HLAVNÍ LOGIKA ---
-if run_btn:
-    # 1. MAKRO DATA PRO VŠECHNY MODY
-    regime, vix, panic_prob, tnx = get_macro_data()
+# 2. Spuštění
+if start_btn:
+    regime, vix, panic_prob = get_macro_data()
     
-    # --- MODE: ANALYZER ---
-    if mode == "ANALYZER 🔮":
-        st.subheader(f"🔮 Analýza Budoucnosti: {ticker_input}")
+    # --- ANALYZER ---
+    if mode == "ANALYZER (Predikce)":
+        st.header(f"🔮 Predikce budoucnosti: {ticker_input}")
         
-        with st.spinner("Stahuji data a počítám fraktály..."):
-            data = download_data(ticker_input, f"{history_years}y")
-            if data.empty: st.error("Chyba: Ticker nenalezen."); st.stop()
+        with st.spinner("Počítám fraktály a simuluji trh..."):
+            data = download_data(ticker_input)
+            if data.empty: st.error("Ticker nenalezen."); st.stop()
             
             target = get_fundamentals(ticker_input)
             paths, hurst = run_garch_simulation(data, 252, simulations, vix, panic_prob, target)
             
-            # Výsledky
+            # Výpočty
             start_p = paths[0,0]
             final_p = paths[-1]
             median_ret = ((np.median(final_p)-start_p)/start_p)*100
@@ -198,20 +186,21 @@ if run_btn:
             kelly = (prob_win - (1-prob_win)/(avg_win/avg_loss)) if avg_loss > 0 else 0
             safe_kelly = max(0, kelly * 0.5) * 100
 
-            # UI Metriky
+            # Zobrazení
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Cena", f"${start_p:.2f}")
-            c2.metric("Režim Trhu", regime)
-            c3.metric("Hurst Exp", f"{hurst:.2f}")
+            c2.metric("Režim Trhu (AI)", regime)
+            c3.metric("Hurst Exp", f"{hurst:.2f}", delta=">0.5 Trend" if hurst>0.5 else "<0.5 Chaos")
             c4.metric("VIX", f"{vix:.2f}")
             
             st.divider()
-            k_col1, k_col2, k_col3 = st.columns(3)
-            k_col1.metric("Očekávaný Výnos (1r)", f"{median_ret:.1f} %")
-            k_col2.metric("Riziko (VaR 95)", f"{var_95:.1f} %", delta_color="inverse")
-            k_col3.metric("💎 Kelly Alokace", f"{safe_kelly:.1f} %")
             
-            # Grafy
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Očekávaný Výnos (1r)", f"{median_ret:.1f} %")
+            k2.metric("Riziko (VaR 95)", f"{var_95:.1f} %")
+            k3.metric("💎 Kelly Alokace", f"{safe_kelly:.1f} %")
+            
+            # Graf
             fig, ax = plt.subplots(figsize=(10, 5))
             ax.plot(paths[:, :100], color='gray', alpha=0.1)
             ax.plot(np.median(paths, axis=1), color='blue', lw=2, label='Medián')
@@ -221,12 +210,11 @@ if run_btn:
             ax.legend()
             st.pyplot(fig)
 
-    # --- MODE: BACKTESTER ---
-    elif mode == "BACKTESTER 🧪":
-        st.subheader(f"🧪 Reality Check: {ticker_input}")
-        
-        with st.spinner("Cestuji v čase do minulosti..."):
-            full_data = download_data(ticker_input, f"{history_years}y")
+    # --- BACKTESTER ---
+    elif mode == "BACKTESTER (Validace)":
+        st.header(f"🧪 Reality Check: {ticker_input}")
+        with st.spinner("Cestuji v čase..."):
+            full_data = download_data(ticker_input, "5y")
             if len(full_data) < 500: st.error("Málo dat."); st.stop()
             
             train = full_data[:-252]
@@ -234,38 +222,33 @@ if run_btn:
             
             paths, _ = run_garch_simulation(train, 252, simulations, vix, panic_prob)
             
-            # Porovnání
             fig, ax = plt.subplots(figsize=(10, 5))
             upper = np.percentile(paths, 95, axis=1)
             lower = np.percentile(paths, 5, axis=1)
             median = np.median(paths, axis=1)
-            
             real_vals = real.values
             m_len = min(len(real_vals), len(median))
             
-            ax.fill_between(range(m_len), lower[:m_len], upper[:m_len], color='blue', alpha=0.15, label='Model (90% Pásmo)')
-            ax.plot(median[:m_len], color='blue', lw=2, label='Model Medián')
-            ax.plot(real_vals[:m_len], color='red', lw=3, label='REALITA')
+            ax.fill_between(range(m_len), lower[:m_len], upper[:m_len], color='blue', alpha=0.15, label='90% Pásmo')
+            ax.plot(median[:m_len], color='blue', label='Model')
+            ax.plot(real_vals[:m_len], color='red', lw=2, label='REALITA')
             ax.legend()
             st.pyplot(fig)
             
-            # Skóre
             inside = np.sum((real_vals[:m_len] >= lower[:m_len]) & (real_vals[:m_len] <= upper[:m_len]))
             score = (inside / m_len) * 100
             
-            if score > 80: st.success(f"✅ Model je ROBUSTNÍ. Skóre: {score:.1f}%")
-            elif score > 50: st.warning(f"⚠️ Model je PŘIJATELNÝ. Skóre: {score:.1f}%")
-            else: st.error(f"❌ Model SELHAL. Skóre: {score:.1f}%")
+            if score > 80: st.success(f"✅ Model je ROBUSTNÍ (Skóre: {score:.1f}%)")
+            else: st.warning(f"⚠️ Model podcenil volatilitu (Skóre: {score:.1f}%)")
 
-    # --- MODE: OPTIMIZER ---
-    elif mode == "OPTIMIZER ⚖️":
-        st.subheader("⚖️ Black-Litterman Portfolio Architect")
-        
+    # --- OPTIMIZER ---
+    elif mode == "OPTIMIZER (Portfolio)":
+        st.header("⚖️ Black-Litterman Portfolio")
         tickers = [t.strip() for t in portfolio_input.split(',')]
         
-        with st.spinner("Optimalizuji váhy aktiv..."):
+        with st.spinner("Optimalizuji váhy..."):
             data = yf.download(tickers, period="2y", progress=False)['Close']
-            if data.empty: st.error("Chyba stahování portfolia."); st.stop()
+            if data.empty: st.error("Chyba dat."); st.stop()
             
             # Market Caps
             caps = {}
@@ -274,12 +257,11 @@ if run_btn:
                 except: caps[t] = 1e9
             mkt_w = np.array([caps[t]/sum(caps.values()) for t in tickers])
             
-            # BL Math
+            # BL Model
             returns = np.log(data/data.shift(1)).dropna()
             cov = returns.cov() * 252
             pi = 2.5 * np.dot(cov, mkt_w)
             
-            # Views (Kalman)
             my_views = []
             for t in tickers:
                 col = data[t] if isinstance(data, pd.DataFrame) else data
@@ -296,21 +278,14 @@ if run_btn:
             
             cons = ({'type':'eq', 'fun': lambda x: np.sum(x)-1})
             bnds = tuple((0.05, 0.40) for _ in range(len(tickers)))
-            
             res = sco.minimize(neg_sharpe, mkt_w, method='SLSQP', bounds=bnds, constraints=cons)
             
-            # Výstup
-            res_df = pd.DataFrame({
-                "Ticker": tickers,
-                "Alokace": [f"{x*100:.1f} %" for x in res.x],
-                "Původní (Market)": [f"{x*100:.1f} %" for x in mkt_w]
-            })
-            st.table(res_df)
+            # Výsledná tabulka
+            df = pd.DataFrame({"Ticker": tickers, "Alokace": [f"{x*100:.1f} %" for x in res.x]})
+            st.table(df)
             
             exp_ret = np.sum(post_rets * res.x)*100
-            exp_risk = np.sqrt(np.dot(res.x.T, np.dot(cov, res.x)))*100
             st.metric("Očekávaný Výnos Portfolia", f"{exp_ret:.2f} %")
-            st.metric("Riziko Portfolia", f"{exp_risk:.2f} %")
 
 else:
-    st.info("👈 Zadej parametry v levém menu a klikni na SPUSTIT VÝPOČET.")
+    st.info("👈 Vyber režim vlevo a klikni na SPUSTIT ANALÝZU.")
