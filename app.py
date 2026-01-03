@@ -101,10 +101,18 @@ def get_macro_data():
     except: return "NEUTRAL", 20.0, 0.0
 
 def get_fundamentals(ticker):
+    """
+    Získá cílovou cenu analytiků. Pokud selže, vrátí None (ne nulu).
+    """
     try:
-        info = yf.Ticker(ticker).info
-        return info.get('targetMeanPrice', None)
-    except: return None
+        stock = yf.Ticker(ticker)
+        # Zkusíme získat info
+        info = stock.info
+        # Hledáme klíč s cílovou cenou
+        target = info.get('targetMeanPrice') or info.get('targetMedianPrice')
+        return target
+    except:
+        return None
 
 def run_garch_simulation(train_prices, horizon_days, n_sims, macro_vix, panic_prob, target_price=None):
     start_price = train_prices.iloc[-1]
@@ -124,6 +132,7 @@ def run_garch_simulation(train_prices, horizon_days, n_sims, macro_vix, panic_pr
     tech_drift = (trust_in_trend * kalman_trend) + ((1 - trust_in_trend) * long_term_drift)
     ai_penalty = -0.20 * panic_prob
     
+    # Pokud máme target price, zahrneme ho do driftu
     if target_price and target_price > 0:
         fund_drift = np.log(1 + (target_price - start_price)/start_price)
         base_drift = (0.4 * tech_drift) + (0.6 * fund_drift)
@@ -195,7 +204,7 @@ if start_btn:
             final_p = paths[-1]
             var_95 = ((np.percentile(final_p, 5)-start_p)/start_p)*100
             
-            # --- NOVINKA: Expected Shortfall (CVaR) ---
+            # --- CVaR (Extrémní riziko) ---
             worst_5_percent = final_p[final_p <= np.percentile(final_p, 5)]
             cvar_95 = ((np.mean(worst_5_percent) - start_p) / start_p) * 100
             
@@ -206,9 +215,9 @@ if start_btn:
             kelly = (prob_win - (1-prob_win)/(avg_win/avg_loss)) if avg_loss > 0 else 0
             safe_kelly = max(0, kelly * 0.5) * 100
 
-            # Fundamentální Analýza (Wall St.)
-            wall_street_upside = 0
-            if target:
+            # Fundamentální Analýza (Wall St.) - OPRAVENO
+            wall_street_upside = None
+            if target and target > 0:
                 wall_street_upside = ((target - start_p) / start_p) * 100
 
             # --- VYHODNOCENÍ SIGNÁLU (SEMAFOR) ---
@@ -216,8 +225,10 @@ if start_btn:
             signal_color = "red"
             explanation = "Riziko převažuje nad potenciálním ziskem. Model doporučuje vyčkat."
             
-            # Logika rozhodování
-            if safe_kelly > 15 and wall_street_upside > 0:
+            # Logika rozhodování (používáme fundamenty jen pokud existují)
+            is_fundamentally_good = (wall_street_upside is not None and wall_street_upside > 0)
+            
+            if safe_kelly > 15 and is_fundamentally_good:
                 signal_text = "SILNÝ NÁKUP (STRONG BUY) 🚀"
                 signal_color = "green"
                 explanation = "Matematika (Model) i Analytici (Wall St.) se shodují na růstu."
@@ -246,11 +257,13 @@ if start_btn:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Aktuální Cena", f"${start_p:.2f}")
             
-            val_color = "normal"
-            if wall_street_upside > 5: val_color = "normal" # Green default in dark mode
-            elif wall_street_upside < 0: val_color = "inverse" # Red
+            # Zobrazení potenciálu Wall St. (ošetření N/A)
+            if wall_street_upside is not None:
+                val_color = "normal" if wall_street_upside > 0 else "inverse"
+                c2.metric("Potenciál (Wall St.)", f"{wall_street_upside:+.1f} %", delta_color=val_color)
+            else:
+                c2.metric("Potenciál (Wall St.)", "N/A", help="Data analytiků nejsou dostupná")
             
-            c2.metric("Potenciál (Wall St.)", f"{wall_street_upside:+.1f} %", help="O kolik je akcie levnější než cílová cena analytiků", delta_color=val_color)
             c3.metric("Kelly Alokace (Max sázka)", f"{safe_kelly:.1f} %", help="Kolik % portfolia do toho maximálně vložit")
             c4.metric("Pravděpodobnost Zisku", f"{prob_win*100:.1f} %", help="Šance, že obchod skončí v plusu (Win Rate)")
 
@@ -261,7 +274,7 @@ if start_btn:
             roi_color = "normal" if roi_x > 0 else "inverse"
             col_target1.metric("Očekávaná Cena (Model)", f"${median_x:.2f}", f"{roi_x:+.2f} %", delta_color=roi_color)
             col_target2.metric("Riziko poklesu (VaR 95%)", f"{var_95:.1f} %", help="Maximální ztráta v 95% případů")
-            col_target3.metric("Extrémní Riziko (CVaR)", f"{cvar_95:.1f} %", help="Průměrná ztráta při katastrofě (černá labuť)")
+            col_target3.metric("Extrémní Riziko (CVaR)", f"{cvar_95:.1f} %", help="Průměrná ztráta při katastrofě")
 
             # 4. Grafy
             tab1, tab2 = st.tabs(["📈 Vývoj Ceny (Simulace)", "📊 Rozdělení Pravděpodobnosti"])
