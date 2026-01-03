@@ -195,6 +195,10 @@ if start_btn:
             final_p = paths[-1]
             var_95 = ((np.percentile(final_p, 5)-start_p)/start_p)*100
             
+            # --- NOVINKA: Expected Shortfall (CVaR) ---
+            worst_5_percent = final_p[final_p <= np.percentile(final_p, 5)]
+            cvar_95 = ((np.mean(worst_5_percent) - start_p) / start_p) * 100
+            
             # Kellyho Kritérium (Srdce modelu)
             ret_sim = (final_p - start_p)/start_p
             prob_win = np.mean(ret_sim > 0)
@@ -248,15 +252,16 @@ if start_btn:
             
             c2.metric("Potenciál (Wall St.)", f"{wall_street_upside:+.1f} %", help="O kolik je akcie levnější než cílová cena analytiků", delta_color=val_color)
             c3.metric("Kelly Alokace (Max sázka)", f"{safe_kelly:.1f} %", help="Kolik % portfolia do toho maximálně vložit")
-            c4.metric("AI Režim Trhu", regime, help="CALM = Klid, PANIC = Vysoké riziko")
+            c4.metric("Pravděpodobnost Zisku", f"{prob_win*100:.1f} %", help="Šance, že obchod skončí v plusu (Win Rate)")
 
             # 3. Predikce na Den X
             st.subheader(f"📅 Predikce ceny za {target_day} dní")
-            col_target1, col_target2 = st.columns(2)
+            col_target1, col_target2, col_target3 = st.columns(3)
             
             roi_color = "normal" if roi_x > 0 else "inverse"
             col_target1.metric("Očekávaná Cena (Model)", f"${median_x:.2f}", f"{roi_x:+.2f} %", delta_color=roi_color)
-            col_target2.metric("Riziko poklesu (VaR)", f"{var_95:.1f} %", help="Nejhorší scénář v 5% případů")
+            col_target2.metric("Riziko poklesu (VaR 95%)", f"{var_95:.1f} %", help="Maximální ztráta v 95% případů")
+            col_target3.metric("Extrémní Riziko (CVaR)", f"{cvar_95:.1f} %", help="Průměrná ztráta při katastrofě (černá labuť)")
 
             # 4. Grafy
             tab1, tab2 = st.tabs(["📈 Vývoj Ceny (Simulace)", "📊 Rozdělení Pravděpodobnosti"])
